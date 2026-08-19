@@ -40,6 +40,7 @@ import pandas as pd
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
+
 try:
     import pyodbc
 except ImportError:
@@ -50,12 +51,13 @@ except ImportError:
 # CONFIG — EDIT THIS SECTION ONLY
 # ============================================================================
 
+
 class Config:
     # ---- Database connection -------------------------------------------------
     DB_DRIVER = "{ODBC Driver 18 for SQL Server}"
-    DB_SERVER = "es-mssql-01"            # e.g. "SERVERNAME\\SQLEXPRESS" or an IP
+    DB_SERVER = "es-mssql-01"  # e.g. "SERVERNAME\\SQLEXPRESS" or an IP
     DB_NAME = "ACONEX Reporting Data"
-    DB_TRUSTED_CONNECTION = True       # True = use Windows auth, ignore user/pass below
+    DB_TRUSTED_CONNECTION = True  # True = use Windows auth, ignore user/pass below
     DB_USERNAME = ""
     DB_PASSWORD = ""
 
@@ -68,28 +70,28 @@ class Config:
     DOC_REGISTER_COL_REVISION = "Revision"
     DOC_REGISTER_COL_STATUS = "ReviewStatus"
     DOC_REGISTER_COL_PLIP_ID = "VDRCode"
-    APPROVED_STATUS_VALUE = "Approved"   # exact string that means "Approved" in your DB
+    APPROVED_STATUS_VALUE = "Approved"  # exact string that means "Approved" in your DB
     DOC_REGISTER_COL_PROJECT_ID = "ProjectId"
 
     # ---- Workflow table ---------------------------------------------------------
-    WORKFLOW_TABLE = "WorkflowTest"
+    WORKFLOW_TABLE = "Workflows"
     WORKFLOW_COL_DOC_NUMBER = "DocumentNumber"
     WORKFLOW_COL_REVISION = "DocumentRevision"
-    WORKFLOW_COL_WORKFLOW_NUMBER = "WorkflowNumber"   # groups step-instances together
+    WORKFLOW_COL_WORKFLOW_NUMBER = "WorkflowNumber"  # groups step-instances together
     WORKFLOW_COL_TEMPLATE_NAME = "WorkflowTemplate"
     WORKFLOW_COL_PROJECT_ID = "ProjectId"
     WORKFLOW_COL_STATUS = "WorkflowStatus"
 
     # ---- DDM Excel file -----------------------------------------------------------
     DDM_FILE_PATH = ""
-    DDM_SHEET_NAME = 0                 # sheet name or index; 0 = first sheet
+    DDM_SHEET_NAME = 0  # sheet name or index; 0 = first sheet
     DDM_COL_PLIP_ID = "PLIP ID"
     DDM_COL_TEMPLATE_NAME = "Template"
     DDM_COL_WORKFLOW_RULE = "Column6"
-    DDM_HEADER_ROW = 0                 # 0-indexed row number where headers live
+    DDM_HEADER_ROW = 0  # 0-indexed row number where headers live
 
     # ---- Output ---------------------------------------------------------------------
-    OUTPUT_DIR = r"\\pd-file-srv-01\Docs\AIS\DMS\Aconex\Power BI\SQL-PowerBi Report\BUDOUR (5376200)\Data for Reports"   # folder to write the report into
+    OUTPUT_DIR = r"\\pd-file-srv-01\Docs\AIS\DMS\Aconex\Power BI\SQL-PowerBi Report\BUDOUR (5376200)\Data for Reports"  # folder to write the report into
     OUTPUT_FILENAME_PREFIX = "workflow_template_vs_ddm_report"
 
     # ---- Behaviour ------------------------------------------------------------------
@@ -189,7 +191,9 @@ def get_approved_documents(conn) -> pd.DataFrame:
         AND [{Config.DOC_REGISTER_COL_PROJECT_ID}] = ?
     """
     log.info("Fetching Approved documents from %s ...", Config.DOC_REGISTER_TABLE)
-    df = pd.read_sql(query, conn, params=[Config.APPROVED_STATUS_VALUE, Config.PROJECT_ID])
+    df = pd.read_sql(
+        query, conn, params=[Config.APPROVED_STATUS_VALUE, Config.PROJECT_ID]
+    )
     df["doc_number"] = df["doc_number"].astype(str).str.strip()
     df["revision"] = df["revision"].astype(str).str.strip()
     df["plip_id"] = df["plip_id"].astype(str).str.strip()
@@ -209,28 +213,17 @@ def get_workflow_templates_for_document(conn, doc_number: str, revision: str):
         AND ISNULL([{Config.WORKFLOW_COL_STATUS}], '') <> 'Terminated'
     """
 
-    df = pd.read_sql(
-        query,
-        conn,
-        params=[doc_number, revision, Config.PROJECT_ID]
-    )
+    df = pd.read_sql(query, conn, params=[doc_number, revision, Config.PROJECT_ID])
 
     if df.empty:
         return []
 
-    templates = (
-        df["template_name"]
-        .astype(str)
-        .str.strip()
-        .tolist()
-    )
+    templates = df["template_name"].astype(str).str.strip().tolist()
 
-    templates = [
-        t for t in templates
-        if t and t.lower() != "none"
-    ]
+    templates = [t for t in templates if t and t.lower() != "none"]
 
     return list(set(templates))
+
 
 def load_ddm() -> pd.DataFrame:
     """Load the DDM excel sheet and return a lookup keyed by PLIP ID."""
@@ -247,23 +240,27 @@ def load_ddm() -> pd.DataFrame:
     )
 
     missing = [
-    c for c in (
-        Config.DDM_COL_PLIP_ID,
-        Config.DDM_COL_TEMPLATE_NAME,
-        Config.DDM_COL_WORKFLOW_RULE,
-    )
-    if c not in df.columns
+        c
+        for c in (
+            Config.DDM_COL_PLIP_ID,
+            Config.DDM_COL_TEMPLATE_NAME,
+            Config.DDM_COL_WORKFLOW_RULE,
+        )
+        if c not in df.columns
     ]
 
     if missing:
         log.error(
             "DDM file is missing expected column(s): %s. Columns found: %s",
-            missing, list(df.columns),
+            missing,
+            list(df.columns),
         )
         sys.exit(1)
 
     df[Config.DDM_COL_PLIP_ID] = df[Config.DDM_COL_PLIP_ID].astype(str).str.strip()
-    df[Config.DDM_COL_TEMPLATE_NAME] = df[Config.DDM_COL_TEMPLATE_NAME].astype(str).str.strip()
+    df[Config.DDM_COL_TEMPLATE_NAME] = (
+        df[Config.DDM_COL_TEMPLATE_NAME].astype(str).str.strip()
+    )
 
     log.info("DDM loaded: %d row(s).", len(df))
     return df.set_index(Config.DDM_COL_PLIP_ID)
@@ -280,9 +277,7 @@ def compare(conn, ddm_lookup, approved_docs):
         plip_id = row["plip_id"]
 
         workflow_templates = get_workflow_templates_for_document(
-            conn,
-            doc_number,
-            revision
+            conn, doc_number, revision
         )
 
         if plip_id not in ddm_lookup.index:
@@ -298,7 +293,7 @@ def compare(conn, ddm_lookup, approved_docs):
                     has_required_workflow="N/A",
                     has_pem_approval="N/A",
                     result="DDM NOT FOUND",
-                    notes="PLIP ID not found in DDM"
+                    notes="PLIP ID not found in DDM",
                 )
             )
 
@@ -309,13 +304,9 @@ def compare(conn, ddm_lookup, approved_docs):
         if isinstance(ddm_row, pd.DataFrame):
             ddm_row = ddm_row.iloc[0]
 
-        ddm_template = str(
-            ddm_row[Config.DDM_COL_TEMPLATE_NAME]
-        ).strip()
+        ddm_template = str(ddm_row[Config.DDM_COL_TEMPLATE_NAME]).strip()
 
-        workflow_rule = str(
-            ddm_row[Config.DDM_COL_WORKFLOW_RULE]
-        ).strip()
+        workflow_rule = str(ddm_row[Config.DDM_COL_WORKFLOW_RULE]).strip()
 
         # --------------------------------------------------
         # CANNOT BE DETERMINED
@@ -334,25 +325,20 @@ def compare(conn, ddm_lookup, approved_docs):
                     has_required_workflow="N/A",
                     has_pem_approval="N/A",
                     result="Can't Be Determined",
-                    notes=f"Column6 value is '{workflow_rule}'."
+                    notes=f"Column6 value is '{workflow_rule}'.",
                 )
             )
 
             continue
 
         normalized_templates = [
-            strip_trailing_discipline_tag(t).lower()
-            for t in workflow_templates
+            strip_trailing_discipline_tag(t).lower() for t in workflow_templates
         ]
 
-        has_pem_approval = any(
-            t.lower() == "pem approval"
-            for t in workflow_templates
-        )
+        has_pem_approval = any(t.lower() == "pem approval" for t in workflow_templates)
 
         has_required_workflow = any(
-            t == ddm_template.lower()
-            for t in normalized_templates
+            t == ddm_template.lower() for t in normalized_templates
         )
 
         # --------------------------------------------------
@@ -389,28 +375,19 @@ def compare(conn, ddm_lookup, approved_docs):
 
                 result = "FAIL"
 
-                notes = (
-                    "Document entered PEM Approval "
-                    "without required workflow."
-                )
+                notes = "Document entered PEM Approval " "without required workflow."
 
             elif has_required_workflow and not has_pem_approval:
 
                 result = "FAIL"
 
-                notes = (
-                    "Required workflow found but "
-                    "PEM Approval missing."
-                )
+                notes = "Required workflow found but " "PEM Approval missing."
 
             else:
 
                 result = "FAIL"
 
-                notes = (
-                    "Neither required workflow "
-                    "nor PEM Approval found."
-                )
+                notes = "Neither required workflow " "nor PEM Approval found."
 
         results.append(
             ComparisonResult(
@@ -429,20 +406,23 @@ def compare(conn, ddm_lookup, approved_docs):
 
     return results
 
+
 def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
     df = pd.DataFrame([r.__dict__ for r in results])
-    df = df.rename(columns={
-        "document_number": "Document Number",
-        "revision": "Revision",
-        "plip_id": "PLIP ID",
-        "ddm_template": "DDM Template",
-        "workflow_rule": "Column6",
-        "workflows_found": "Workflow Templates Found",
-        "has_required_workflow": "Required Workflow Found",
-        "has_pem_approval": "PEM Approval Found",
-        "result": "Result",
-        "notes": "Notes",
-    })
+    df = df.rename(
+        columns={
+            "document_number": "Document Number",
+            "revision": "Revision",
+            "plip_id": "PLIP ID",
+            "ddm_template": "DDM Template",
+            "workflow_rule": "Column6",
+            "workflows_found": "Workflow Templates Found",
+            "has_required_workflow": "Required Workflow Found",
+            "has_pem_approval": "PEM Approval Found",
+            "result": "Result",
+            "notes": "Notes",
+        }
+    )
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = Path(output_dir) / f"{Config.OUTPUT_FILENAME_PREFIX}_{timestamp}.xlsx"
@@ -450,50 +430,26 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
 
-        df.to_excel(
-            writer,
-            index=False,
-            sheet_name="Comparison"
-        )
+        df.to_excel(writer, index=False, sheet_name="Comparison")
 
         summary = (
-            df["Result"]
-            .value_counts()
-            .rename_axis("Result")
-            .reset_index(name="Count")
+            df["Result"].value_counts().rename_axis("Result").reset_index(name="Count")
         )
 
-        summary.to_excel(
-            writer,
-            index=False,
-            sheet_name="Summary"
-        )
+        summary.to_excel(writer, index=False, sheet_name="Summary")
 
         workbook = writer.book
 
         comparison_ws = writer.sheets["Comparison"]
         summary_ws = writer.sheets["Summary"]
 
-        green_fill = PatternFill(
-            fill_type="solid",
-            fgColor="00B050"
-        )
+        green_fill = PatternFill(fill_type="solid", fgColor="00B050")
 
-        red_fill = PatternFill(
-            fill_type="solid",
-            fgColor="C00000"
-        )
+        red_fill = PatternFill(fill_type="solid", fgColor="C00000")
 
-        yellow_fill = PatternFill(
-            fill_type="solid",
-            fgColor="FFD966"
-        )
+        yellow_fill = PatternFill(fill_type="solid", fgColor="FFD966")
 
-        orange_fill = PatternFill(
-            fill_type="solid",
-            fgColor="ED7D31"
-        )
-
+        orange_fill = PatternFill(fill_type="solid", fgColor="ED7D31")
 
         for row in range(2, summary_ws.max_row + 1):
 
@@ -514,15 +470,9 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
         # Header Style
         # ====================================
 
-        header_fill = PatternFill(
-            "solid",
-            fgColor="1F4E78"
-        )
+        header_fill = PatternFill("solid", fgColor="1F4E78")
 
-        header_font = Font(
-            color="FFFFFF",
-            bold=True
-        )
+        header_font = Font(color="FFFFFF", bold=True)
 
         for ws in [comparison_ws, summary_ws]:
 
@@ -540,24 +490,21 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
         # ====================================
         # Autofilter
         # ====================================
-        
-        table = Table(
-            displayName="ComparisonTable",
-            ref=comparison_ws.dimensions
-        )
+
+        table = Table(displayName="ComparisonTable", ref=comparison_ws.dimensions)
 
         style = TableStyleInfo(
             name="TableStyleMedium2",
             showFirstColumn=False,
             showLastColumn=False,
             showRowStripes=True,
-            showColumnStripes=False
+            showColumnStripes=False,
         )
 
         table.tableStyleInfo = style
 
-        comparison_ws.add_table(table)        
-        #=====================
+        comparison_ws.add_table(table)
+        # =====================
         # Auto Width
         # ====================================
 
@@ -567,47 +514,28 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
 
                 max_length = 0
 
-                column_letter = get_column_letter(
-                    column[0].column
-                )
+                column_letter = get_column_letter(column[0].column)
 
                 for cell in column:
 
                     try:
-                        max_length = max(
-                            max_length,
-                            len(str(cell.value))
-                        )
+                        max_length = max(max_length, len(str(cell.value)))
                     except:
                         pass
 
-                ws.column_dimensions[
-                    column_letter
-                ].width = min(max_length + 3, 60)
+                ws.column_dimensions[column_letter].width = min(max_length + 3, 60)
 
         # ====================================
         # Conditional Coloring
         # ====================================
 
-        green_fill = PatternFill(
-            fill_type="solid",
-            fgColor="00B050"
-        )
+        green_fill = PatternFill(fill_type="solid", fgColor="00B050")
 
-        red_fill = PatternFill(
-            fill_type="solid",
-            fgColor="FF0000"
-        )
+        red_fill = PatternFill(fill_type="solid", fgColor="FF0000")
 
-        yellow_fill = PatternFill(
-            fill_type="solid",
-            fgColor="FFD966"
-        )
+        yellow_fill = PatternFill(fill_type="solid", fgColor="FFD966")
 
-        orange_fill = PatternFill(
-            fill_type="solid",
-            fgColor="ED7D31"
-        )
+        orange_fill = PatternFill(fill_type="solid", fgColor="ED7D31")
 
         result_col = None
 
@@ -620,15 +548,9 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
 
         if result_col:
 
-            for row in range(
-                2,
-                comparison_ws.max_row + 1
-            ):
+            for row in range(2, comparison_ws.max_row + 1):
 
-                result = comparison_ws.cell(
-                    row=row,
-                    column=result_col
-                ).value
+                result = comparison_ws.cell(row=row, column=result_col).value
 
                 fill = None
 
@@ -646,12 +568,10 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
 
                 if fill:
 
-                    comparison_ws.cell(
-                        row=row,
-                        column=result_col
-                    ).fill = fill
+                    comparison_ws.cell(row=row, column=result_col).fill = fill
 
     return out_path
+
 
 def generate_report(output_dir):
 
@@ -666,19 +586,12 @@ def generate_report(output_dir):
 
         ddm_lookup = load_ddm()
 
-        results = compare(
-            conn,
-            ddm_lookup,
-            approved_docs
-        )
+        results = compare(conn, ddm_lookup, approved_docs)
 
     finally:
         conn.close()
 
-    return write_report(
-        results,
-        output_dir
-    )
+    return write_report(results, output_dir)
 
 
 def main():
@@ -694,10 +607,7 @@ def main():
     finally:
         conn.close()
 
-    out_path = write_report(
-    results,
-    Config.OUTPUT_DIR
-)
+    out_path = write_report(results, Config.OUTPUT_DIR)
 
     total = len(results)
     matches = sum(1 for r in results if r.result == "MATCH")
