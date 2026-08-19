@@ -62,7 +62,7 @@ class Config:
     DB_PASSWORD = ""
 
     # ---- Project Filter ------------------------------------------------------
-    PROJECT_ID = "1342183550"  # change per project
+    PROJECT_ID = 1342183550  # change per project
 
     # ---- Document Register table ----------------------------------------------
     DOC_REGISTER_TABLE = "DocumentRegisterHistory"
@@ -88,7 +88,18 @@ class Config:
     DDM_COL_PLIP_ID = "PLIP ID"
     DDM_COL_TEMPLATE_NAME = "Template"
     DDM_COL_WORKFLOW_RULE = "Column6"
-    DDM_HEADER_ROW = 0  # 0-indexed row number where headers live
+    DDM_HEADER_ROW = 1  # 0-indexed row number where headers live
+
+    # ---- Refresh Tracking ------------------------------------------------------
+    ORG_ID = 1342190259
+    REPORT_CATEGORY = "DDR_Check"
+
+    REFRESH_TIME_TABLE = "dbo.RefreshTime"
+
+    REFRESH_COL_LAST_REFRESHED = "Last Refreshed"
+    REFRESH_COL_PROJECT_ID = "ProjectId"
+    REFRESH_COL_REPORT_CATEGORY = "ReportCategory"
+    REFRESH_COL_ORG_ID = "OrgId"
 
     # ---- Output ---------------------------------------------------------------------
     OUTPUT_DIR = r"\\pd-file-srv-01\Docs\AIS\DMS\Aconex\Power BI\SQL-PowerBi Report\BUDOUR (5376200)\Data for Reports"  # folder to write the report into
@@ -591,7 +602,65 @@ def generate_report(output_dir):
     finally:
         conn.close()
 
-    return write_report(results, output_dir)
+    out_path = write_report(results, output_dir)
+
+    # Update refresh table here
+    conn = build_connection()
+
+    try:
+        update_refresh_time(conn)
+    finally:
+        conn.close()
+
+    return out_path
+
+
+def update_refresh_time(conn):
+
+    now = datetime.now()
+
+    cursor = conn.cursor()
+
+    cursor.execute(
+        f"""
+        UPDATE {Config.REFRESH_TIME_TABLE}
+        SET [{Config.REFRESH_COL_LAST_REFRESHED}] = ?
+        WHERE [{Config.REFRESH_COL_PROJECT_ID}] = ?
+          AND [{Config.REFRESH_COL_REPORT_CATEGORY}] = ?
+          AND [{Config.REFRESH_COL_ORG_ID}] = ?
+        """,
+        (
+            now,
+            Config.PROJECT_ID,
+            Config.REPORT_CATEGORY,
+            Config.ORG_ID,
+        ),
+    )
+
+    if cursor.rowcount == 0:
+
+        cursor.execute(
+            f"""
+            INSERT INTO {Config.REFRESH_TIME_TABLE}
+            (
+                [{Config.REFRESH_COL_LAST_REFRESHED}],
+                [{Config.REFRESH_COL_PROJECT_ID}],
+                [{Config.REFRESH_COL_REPORT_CATEGORY}],
+                [{Config.REFRESH_COL_ORG_ID}]
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                now,
+                Config.PROJECT_ID,
+                Config.REPORT_CATEGORY,
+                Config.ORG_ID,
+            ),
+        )
+
+    conn.commit()
+
+    log.info("RefreshTime updated successfully.")
 
 
 def main():
@@ -608,6 +677,20 @@ def main():
         conn.close()
 
     out_path = write_report(results, Config.OUTPUT_DIR)
+
+    # Update refresh tracking table
+    log.info("Starting RefreshTime update...")
+
+    conn = build_connection()
+
+    try:
+        update_refresh_time(conn)
+    except Exception:
+        log.exception("RefreshTime update failed")
+    finally:
+        conn.close()
+
+    log.info("Finished RefreshTime update.")
 
     total = len(results)
     matches = sum(1 for r in results if r.result == "MATCH")
