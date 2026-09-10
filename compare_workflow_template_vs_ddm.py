@@ -72,6 +72,7 @@ class Config:
     DOC_REGISTER_COL_PLIP_ID = "VDRCode"
     APPROVED_STATUS_VALUE = "Approved"  # exact string that means "Approved" in your DB
     DOC_REGISTER_COL_PROJECT_ID = "ProjectId"
+    DOC_REGISTER_COL_ENPPI_ORIGINATOR = "ProjectField5"
 
     # ---- Workflow table ---------------------------------------------------------
     WORKFLOW_TABLE = "Workflows"
@@ -92,7 +93,7 @@ class Config:
 
     # ---- Refresh Tracking ------------------------------------------------------
     ORG_ID = 1342190259
-    REPORT_CATEGORY = "DDR_Check"
+    REPORT_CATEGORY = "DDM_Check"
 
     REFRESH_TIME_TABLE = "dbo.RefreshTime"
 
@@ -154,6 +155,7 @@ class ComparisonResult:
     document_number: str
     revision: str
     plip_id: str
+    enppi_originator: str
     ddm_template: str
     workflow_rule: str
     workflows_found: str
@@ -196,7 +198,8 @@ def get_approved_documents(conn) -> pd.DataFrame:
         SELECT
             [{Config.DOC_REGISTER_COL_DOC_NUMBER}] AS doc_number,
             [{Config.DOC_REGISTER_COL_REVISION}] AS revision,
-            [{Config.DOC_REGISTER_COL_PLIP_ID}] AS plip_id
+            [{Config.DOC_REGISTER_COL_PLIP_ID}] AS plip_id,
+            [{Config.DOC_REGISTER_COL_ENPPI_ORIGINATOR}] AS enppi_originator
         FROM {Config.DOC_REGISTER_TABLE}
         WHERE [{Config.DOC_REGISTER_COL_STATUS}] = ?
         AND [{Config.DOC_REGISTER_COL_PROJECT_ID}] = ?
@@ -208,6 +211,7 @@ def get_approved_documents(conn) -> pd.DataFrame:
     df["doc_number"] = df["doc_number"].astype(str).str.strip()
     df["revision"] = df["revision"].astype(str).str.strip()
     df["plip_id"] = df["plip_id"].astype(str).str.strip()
+    df["enppi_originator"] = df["enppi_originator"].fillna("").astype(str).str.strip()
     log.info("Found %d Approved document(s).", len(df))
     return df
 
@@ -286,6 +290,7 @@ def compare(conn, ddm_lookup, approved_docs):
         doc_number = row["doc_number"]
         revision = row["revision"]
         plip_id = row["plip_id"]
+        enppi_originator = row["enppi_originator"]
 
         workflow_templates = get_workflow_templates_for_document(
             conn, doc_number, revision
@@ -298,12 +303,13 @@ def compare(conn, ddm_lookup, approved_docs):
                     document_number=doc_number,
                     revision=revision,
                     plip_id=plip_id,
+                    enppi_originator=enppi_originator,
                     ddm_template="",
                     workflow_rule="",
                     workflows_found=", ".join(workflow_templates),
                     has_required_workflow="N/A",
                     has_pem_approval="N/A",
-                    result="DDM NOT FOUND",
+                    result="PLIP ID Not Found In DDM",
                     notes="PLIP ID not found in DDM",
                 )
             )
@@ -330,6 +336,7 @@ def compare(conn, ddm_lookup, approved_docs):
                     document_number=doc_number,
                     revision=revision,
                     plip_id=plip_id,
+                    enppi_originator=enppi_originator,
                     ddm_template=ddm_template,
                     workflow_rule=workflow_rule,
                     workflows_found=", ".join(workflow_templates),
@@ -356,7 +363,7 @@ def compare(conn, ddm_lookup, approved_docs):
         # ONLY O
         # --------------------------------------------------
 
-        if workflow_rule.upper() in ("EMPTY", "ONLY R", "", "NAN"):
+        if workflow_rule.upper() in ("ONLY O", "", "NAN"):
 
             if has_pem_approval:
 
@@ -405,6 +412,7 @@ def compare(conn, ddm_lookup, approved_docs):
                 document_number=doc_number,
                 revision=revision,
                 plip_id=plip_id,
+                enppi_originator=enppi_originator,
                 ddm_template=ddm_template,
                 workflow_rule=workflow_rule,
                 workflows_found=", ".join(workflow_templates),
@@ -425,6 +433,7 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
             "document_number": "Document Number",
             "revision": "Revision",
             "plip_id": "PLIP ID",
+            "enppi_originator": "ENPPI Originator",
             "ddm_template": "DDM Template",
             "workflow_rule": "Column6",
             "workflows_found": "Workflow Templates Found",
@@ -435,8 +444,7 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
         }
     )
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    out_path = Path(output_dir) / f"{Config.OUTPUT_FILENAME_PREFIX}_{timestamp}.xlsx"
+    out_path = Path(output_dir) / f"{Config.OUTPUT_FILENAME_PREFIX}.xlsx"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
@@ -475,7 +483,7 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
             elif result == "Can't Be Determined":
                 summary_ws.cell(row=row, column=1).fill = yellow_fill
 
-            elif result == "DDM NOT FOUND":
+            elif result == "PLIP ID Not Found In DDM":
                 summary_ws.cell(row=row, column=1).fill = orange_fill
         # ====================================
         # Header Style
@@ -574,7 +582,7 @@ def write_report(results: list[ComparisonResult], output_dir: str) -> Path:
                 elif result == "Can't Be Determined":
                     fill = yellow_fill
 
-                elif result == "DDM NOT FOUND":
+                elif result == "PLIP ID Not Found In DDM":
                     fill = orange_fill
 
                 if fill:
@@ -693,9 +701,10 @@ def main():
     log.info("Finished RefreshTime update.")
 
     total = len(results)
-    matches = sum(1 for r in results if r.result == "MATCH")
-    mismatches = sum(1 for r in results if r.result == "MISMATCH")
-    not_found = sum(1 for r in results if r.result == "NOT FOUND")
+    passes = sum(1 for r in results if r.result == "PASS")
+    fails = sum(1 for r in results if r.result == "FAIL")
+    not_found = sum(1 for r in results if r.result == "PLIP ID Not Found In DDM")
+    cannot_determine = sum(1 for r in results if r.result == "Can't Be Determined")
 
     log.info("=" * 60)
     log.info("Total documents checked : %d", total)
